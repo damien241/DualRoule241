@@ -154,12 +154,19 @@ input,select,textarea{font:inherit;color:inherit}
 .profile-avatar-wrap:hover .overlay{opacity:1;}
 .profile-titles{padding-bottom:10px;}
 
-/* PUBLICATION */
+/* PUBLICATION AVEC CARREAUX */
 .wizard{max-width:760px;margin:0 auto;padding:34px 18px 70px}
 .wizard-card{background:#fff;border:1px solid var(--bord);border-radius:var(--radius);padding:28px;box-shadow:var(--shadow)}
-.photo-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:12px;margin-bottom:14px}
-.photo-add{aspect-ratio:4/3;border:2px dashed var(--bord);border-radius:11px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:5px;color:var(--muted);font-size:.82rem;font-weight:600;transition:.15s;cursor:pointer}
-.photo-add:hover{border-color:var(--orange);color:var(--orange);background:var(--orange-clair)}
+
+/* Les fameux carreaux (Miniatures) */
+.media-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(100px,1fr));gap:10px;margin-top:10px;margin-bottom:15px;}
+.media-item{position:relative;aspect-ratio:1;border-radius:10px;overflow:hidden;border:1px solid var(--bord);background:#eee;display:flex;align-items:center;justify-content:center;}
+.media-item img, .media-item video{width:100%;height:100%;object-fit:cover;}
+.media-item .delete-btn{position:absolute;top:5px;right:5px;background:rgba(220,38,38,0.9);color:white;width:24px;height:24px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:14px;cursor:pointer;border:none;}
+.media-item .main-tag{position:absolute;bottom:0;left:0;right:0;background:rgba(249,115,22,0.9);color:white;font-size:10px;text-align:center;font-weight:bold;padding:2px 0;}
+.add-btn{aspect-ratio:1;border:2px dashed var(--bord);border-radius:10px;display:flex;flex-direction:column;align-items:center;justify-content:center;color:var(--muted);cursor:pointer;background:#fafafa;transition:0.2s;}
+.add-btn:hover{border-color:var(--orange);color:var(--orange);background:var(--orange-clair);}
+.add-btn span{font-size:1.5rem;line-height:1;}
 
 /* FOOTER */
 .footer{background:#0f172a;color:#cbd5e1;padding:48px 0 26px;margin-top:40px}
@@ -256,6 +263,10 @@ const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
 let currentUserProfile = null;
 let annoncesDB = [];
+
+// Variables pour stocker les fichiers sélectionnés lors de la publication
+let selectedPhotos = [];
+let selectedVideos = [];
 
 /* ---------- Écran de démarrage ---------- */
 function initSplash(){
@@ -749,15 +760,20 @@ async function sauvegarderProfil(e) {
   }
 }
 
-/* ---------- PUBLICATION AVEC PHOTO DE COUVERTURE (PRINCIPALE) ---------- */
+/* ---------- PUBLICATION AVEC CARREAUX (PHOTOS ET VIDÉOS) ---------- */
 function viewPublier(){
   const u = currentUser();
   if (!u) { location.hash = '#auth/connexion'; return ''; }
+
+  // On réinitialise les tableaux à l'ouverture de la page
+  selectedPhotos = [];
+  selectedVideos = [];
+
   return `
   <div class="wizard">
     <div class="wizard-card">
       <h2>Publier un véhicule</h2>
-      <p style="color:var(--muted);font-size:.88rem;margin-bottom:22px;">Ajoutez jusqu'à 7 photos et 3 vidéos. <br><strong style="color:var(--bleu)">💡 La première photo sélectionnée sera la photo de couverture (principale).</strong></p>
+      <p style="color:var(--muted);font-size:.88rem;margin-bottom:22px;">Ajoutez jusqu'à 7 photos et 3 vidéos. <br><strong style="color:var(--bleu)">💡 La première photo ajoutée sera la photo de couverture (principale).</strong></p>
       
       <form onsubmit="publierAnnonce(event)">
         <div class="field">
@@ -768,14 +784,30 @@ function viewPublier(){
           </select>
         </div>
         
+        <!-- SECTION PHOTOS -->
         <div class="field">
-          <label>Photos (Max 7 - Sélectionnez la couverture en 1er)</label>
-          <input id="pubPhotos" type="file" accept="image/*" multiple required>
+          <label>Photos (Max 7)</label>
+          <div class="media-grid" id="photoGrid">
+            <!-- Les photos s'ajouteront ici -->
+            <div class="add-btn" onclick="document.getElementById('filePhotoInput').click()">
+              <span>+</span>
+              <span style="font-size:0.75rem; margin-top:5px;">Ajouter</span>
+            </div>
+          </div>
+          <input type="file" id="filePhotoInput" accept="image/*" multiple style="display:none;" onchange="handlePhotoSelect(event)">
         </div>
 
+        <!-- SECTION VIDÉOS -->
         <div class="field">
-          <label>Vidéos (Max 3, max 15 Mo chacune)</label>
-          <input id="pubVideos" type="file" accept="video/*" multiple>
+          <label>Vidéos (Max 3, max 50 Mo)</label>
+          <div class="media-grid" id="videoGrid">
+            <!-- Les vidéos s'ajouteront ici -->
+            <div class="add-btn" onclick="document.getElementById('fileVideoInput').click()">
+              <span>+</span>
+              <span style="font-size:0.75rem; margin-top:5px;">Ajouter</span>
+            </div>
+          </div>
+          <input type="file" id="fileVideoInput" accept="video/*" multiple style="display:none;" onchange="handleVideoSelect(event)">
         </div>
 
         <div class="field"><label>Marque</label><input id="pubMarque" required></div>
@@ -792,25 +824,109 @@ function viewPublier(){
   </div>`;
 }
 
+// Gestion de l'ajout de photos (Carreaux)
+function handlePhotoSelect(e) {
+  const files = Array.from(e.target.files);
+  
+  if (selectedPhotos.length + files.length > 7) {
+    toast("Maximum 7 photos autorisées.");
+    return;
+  }
+
+  files.forEach(file => {
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      selectedPhotos.push({ file: file, url: event.target.result });
+      renderMediaGrids();
+    };
+    reader.readAsDataURL(file);
+  });
+  
+  e.target.value = ''; // Reset pour pouvoir re-sélectionner
+}
+
+// Gestion de l'ajout de vidéos (Carreaux)
+function handleVideoSelect(e) {
+  const files = Array.from(e.target.files);
+  
+  if (selectedVideos.length + files.length > 3) {
+    toast("Maximum 3 vidéos autorisées.");
+    return;
+  }
+
+  for (let file of files) {
+    if (file.size > 50 * 1024 * 1024) {
+      toast("La vidéo " + file.name + " dépasse 50 Mo et a été ignorée.");
+      continue;
+    }
+    // On utilise une URL locale temporaire pour la miniature
+    const url = URL.createObjectURL(file);
+    selectedVideos.push({ file: file, url: url });
+  }
+  
+  renderMediaGrids();
+  e.target.value = ''; // Reset
+}
+
+// Affichage des carreaux
+function renderMediaGrids() {
+  // Photos
+  const photoGrid = document.getElementById('photoGrid');
+  photoGrid.innerHTML = selectedPhotos.map((p, index) => `
+    <div class="media-item">
+      <img src="${p.url}">
+      ${index === 0 ? '<div class="main-tag">Principale</div>' : ''}
+      <button type="button" class="delete-btn" onclick="removePhoto(${index})">✕</button>
+    </div>
+  `).join('') + (selectedPhotos.length < 7 ? `
+    <div class="add-btn" onclick="document.getElementById('filePhotoInput').click()">
+      <span>+</span>
+      <span style="font-size:0.75rem; margin-top:5px;">Ajouter</span>
+    </div>
+  ` : '');
+
+  // Vidéos
+  const videoGrid = document.getElementById('videoGrid');
+  videoGrid.innerHTML = selectedVideos.map((v, index) => `
+    <div class="media-item">
+      <video src="${v.url}" muted></video>
+      <button type="button" class="delete-btn" onclick="removeVideo(${index})">✕</button>
+    </div>
+  `).join('') + (selectedVideos.length < 3 ? `
+    <div class="add-btn" onclick="document.getElementById('fileVideoInput').click()">
+      <span>+</span>
+      <span style="font-size:0.75rem; margin-top:5px;">Ajouter</span>
+    </div>
+  ` : '');
+}
+
+function removePhoto(index) {
+  selectedPhotos.splice(index, 1);
+  renderMediaGrids();
+}
+
+function removeVideo(index) {
+  URL.revokeObjectURL(selectedVideos[index].url); // Libère la mémoire
+  selectedVideos.splice(index, 1);
+  renderMediaGrids();
+}
+
+// Envoi final à Supabase
 async function publierAnnonce(e) {
   e.preventDefault();
   const u = currentUser();
   if (!u) return toast("Vous devez être connecté.");
 
   const btn = e.target.querySelector('button');
-  btn.disabled = true; btn.textContent = "Publication en cours...";
+  
+  // Validation
+  if (selectedPhotos.length < 4 && selectedVideos.length < 1) {
+    return toast("Veuillez ajouter au moins 4 photos ou 1 vidéo.");
+  }
+
+  btn.disabled = true; btn.textContent = "Publication en cours (peut prendre du temps)...";
 
   try {
-    const photosInput = document.getElementById('pubPhotos');
-    const videosInput = document.getElementById('pubVideos');
-    
-    const numPhotos = photosInput.files.length;
-    const numVideos = videosInput.files.length;
-
-    if (numPhotos < 4 && numVideos < 1) throw new Error("Veuillez ajouter au moins 4 photos ou 1 vidéo.");
-    if (numPhotos > 7) throw new Error("Maximum 7 photos.");
-    if (numVideos > 3) throw new Error("Maximum 3 vidéos.");
-
     const { data: annonce, error } = await supabaseClient.from('annonces').insert({
       user_id: u.id,
       categorie: document.getElementById('pubCat').value,
@@ -827,10 +943,11 @@ async function publierAnnonce(e) {
 
     if (error) throw error;
 
+    // Upload Photos
     let ordrePhoto = 0;
-    for (const file of photosInput.files) {
-      const filePath = `${annonce.id}/photo_${Date.now()}_${ordrePhoto}.${file.name.split('.').pop()}`;
-      const { error: uploadError } = await supabaseClient.storage.from('photos').upload(filePath, file);
+    for (const item of selectedPhotos) {
+      const filePath = `${annonce.id}/photo_${Date.now()}_${ordrePhoto}.${item.file.name.split('.').pop()}`;
+      const { error: uploadError } = await supabaseClient.storage.from('photos').upload(filePath, item.file);
       
       if (!uploadError) {
         const { data: { publicUrl } } = supabaseClient.storage.from('photos').getPublicUrl(filePath);
@@ -841,14 +958,11 @@ async function publierAnnonce(e) {
       }
     }
 
+    // Upload Vidéos
     let ordreVideo = 0;
-    for (const file of videosInput.files) {
-      if(file.size > 15 * 1024 * 1024) {
-        toast("Une vidéo est trop lourde (>15Mo) et a été ignorée.");
-        continue;
-      }
-      const filePath = `${annonce.id}/video_${Date.now()}_${ordreVideo}.${file.name.split('.').pop()}`;
-      const { error: uploadError } = await supabaseClient.storage.from('videos').upload(filePath, file);
+    for (const item of selectedVideos) {
+      const filePath = `${annonce.id}/video_${Date.now()}_${ordreVideo}.${item.file.name.split('.').pop()}`;
+      const { error: uploadError } = await supabaseClient.storage.from('videos').upload(filePath, item.file);
       
       if (!uploadError) {
         const { data: { publicUrl } } = supabaseClient.storage.from('videos').getPublicUrl(filePath);
@@ -899,6 +1013,12 @@ async function render(){
   }
 
   app.innerHTML = html;
+  
+  // Initialiser les grilles vides au chargement de la page de publication
+  if(route === 'publier') {
+    renderMediaGrids();
+  }
+
   window.scrollTo(0, 0);
   document.getElementById('nav').classList.remove('open');
 }
